@@ -91,18 +91,17 @@
   <section class="card" id="aiCard" hidden>
     <div class="label">תשובת ה-AI → ציון ומשוב (לפי נוסחאות הגיליון)</div>
     <textarea id="aiAnswer" rows="5" dir="auto" placeholder="יש להדביק כאן את כל תשובת ה-AI (כולל בלוק ה-JSON)"></textarea>
-    <button id="computeGrade" class="primary wide">חישוב ציון ומשוב</button>
+    <button id="computeGrade" class="primary wide">חישוב ושמירה בקובץ המחוון</button>
     <div id="aiWarnings" class="warn" hidden></div>
+    <div id="saveStatus" class="hint save-status" hidden></div>
     <div id="gradeOut" hidden>
       <div class="grade-line"><span class="label">ציון מחושב:</span> <span id="gradeValue" class="grade"></span></div>
       <label>משוב לחניכה (נגזר אוטומטית)
         <textarea id="feedbackOut" rows="12" dir="auto"></textarea>
       </label>
       <div class="actions">
-        <button id="copyFeedback" class="primary">העתקת המשוב</button>
-        <button id="copyRow">העתקת שורה לגיליון</button>
+        <button id="copyFeedback" class="primary">העתקת המשוב ל-Moodle</button>
       </div>
-      <div id="rowNote" class="hint"></div>
     </div>
   </section>
 
@@ -129,6 +128,7 @@
   <script src="lib/formula.js"></script>
   <script src="lib/xlsx.js"></script>
   <script src="lib/rubric.js"></script>
+  <script src="lib/xlsxwrite.js"></script>
   <script src="lib/fsstore.js"></script>
   <script src="sidepanel.js"></script>
 </body>

@@ -59,6 +59,9 @@ select {
 .grade-line { margin: 10px 0 6px; }
 .grade { font-size: 22px; font-weight: 700; color: var(--accent); }
 #aiWarnings { margin-top: 8px; white-space: pre-line; }
+.save-status { font-size: 13px; font-weight: 600; }
+.save-status.ok { color: var(--ok); }
+.save-status.bad { color: var(--err); }
 ul#fileList { list-style: none; padding: 0; margin: 4px 0 8px; }
 ul#fileList li { padding: 3px 6px; border-radius: 4px; background: var(--code-bg); margin-bottom: 3px; font-size: 13px; word-break: break-all; }
 ol#log { margin: 4px 0 0; padding-inline-start: 18px; font-size: 13px; }

@@ -31,9 +31,16 @@ the grading instructions, the rubric for this lesson, the official solution, the
 - Each lesson is a **sheet** named `שיעור N`. The sheet is picked from the assignment number, and you can change it in the side panel.
 - Columns are identified by their header text (`שם החניכה`, category headers, `ניקוד`/`ציון`, `לשימור`, `לשיפור`, `פתיחת מדריכ.ה`, `משוב`), so lessons with different layouts all work.
 - The AI receives the weights (from `weights`), the 4-level criteria table, and the dropdown sentence lists for each category.
-- Paste the AI's answer into **תשובת ה-AI** and click **חישוב ציון ומשוב**. The grade and feedback are calculated by running the sheet's **own formulas**, the same ones in the grade and "משוב לחניכה (נגזר אוטומטית)" columns.
-  - Use **העתקת המשוב** to copy the feedback for Moodle.
-  - Use **העתקת שורה לגיליון** to copy the row, then paste it into the student's row in the sheet.
+- The AI is told to return **exactly one sentence** in each retention/improvement field (E, F, H, I, K, L, N, O). If it sends more than one anyway, only the first is kept and a warning is shown.
+- Paste the AI's answer into **תשובת ה-AI** and click **חישוב ושמירה בקובץ המחוון**. The extension:
+  1. Re-reads the Excel file from disk.
+  2. Finds the student's row by name: an exact match first, then an unambiguous first-name match, otherwise the first empty row.
+  3. Writes columns D–P into that row.
+  4. Saves the file.
+  - Grade and feedback come from the sheet's **own formulas**. The formulas stay in the cells, and their saved results are updated.
+  - Before the first write each day, an untouched copy is saved to `Solution\_גיבוי מחוון\`.
+  - **The Excel file must be closed** while saving. If it's open, an error is shown and nothing is changed.
+  - Saving also fixes a problem from the Google Sheets export: `TEXTJOIN` is stored as `_xlfn.TEXTJOIN`, which Excel requires. Before that fix, the "משוב לחניכה" column showed `#NAME?` whenever Excel recalculated.
 - To check the formula engine, I ran it on all 71 filled rows in the workbook. It reproduced Excel's saved grade and feedback for every one.
 
 ## Notes

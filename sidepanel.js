@@ -514,34 +514,85 @@ $('copyPrompt').addEventListener('click', async () => {
   $('aiCard').hidden = !state.lesson;
 });
 
-// ---------- AI answer -> grade + feedback (evaluated with the sheet's own formulas) ----------
-$('computeGrade').addEventListener('click', () => {
+// ---------- AI answer -> grade + feedback -> written into the master Excel file ----------
+function setSaveStatus(text, cls) {
+  const el = $('saveStatus');
+  el.textContent = text;
+  el.className = 'hint save-status ' + (cls || '');
+  el.hidden = !text;
+}
+
+// Keeps one untouched copy of the rubric per day in <base>\_גיבוי מחוון\ before the first write.
+async function backupRubric(fileName, bytes) {
+  const dir = await state.base.getDirectoryHandle('_גיבוי מחוון', { create: true });
+  const d = new Date();
+  const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const name = fileName.replace(/\.xlsx$/i, '') + ` ${stamp}.xlsx`;
+  try { await dir.getFileHandle(name); return null; } catch (_) { /* no backup yet today */ }
+  await FsStore.writeFile(dir, name, bytes);
+  return name;
+}
+
+$('computeGrade').addEventListener('click', async () => {
+  const btn = $('computeGrade');
   const warn = $('aiWarnings');
   warn.hidden = true;
   $('gradeOut').hidden = true;
-  if (!state.lesson || !state.wb) { warn.textContent = 'המחוון לא נטען'; warn.hidden = false; return; }
-  let parsed;
-  try {
-    parsed = Rubric.parseAiResponse($('aiAnswer').value, state.lesson);
-  } catch (e) {
-    warn.textContent = e.message;
-    warn.hidden = false;
-    return;
-  }
-  const res = Rubric.computeRow(state.wb, state.lesson, parsed.inputs, $('studentName').value.trim());
-  const warnings = [...parsed.warnings];
-  if (res.usedFallback) warnings.push('לא נמצאה נוסחת משוב תקינה בגיליון – המשוב נבנה בפורמט ברירת המחדל');
-  if (warnings.length) { warn.textContent = warnings.join('\n'); warn.hidden = false; }
+  setSaveStatus('');
+  if (!state.lesson) { warn.textContent = 'המחוון לא נטען'; warn.hidden = false; return; }
+  const student = $('studentName').value.trim();
+  if (!student) { warn.textContent = 'חסר שם חניכה'; warn.hidden = false; return; }
 
-  $('gradeValue').textContent = res.grade === null ? '(אין נוסחת ציון בגיליון)' : res.grade;
-  $('feedbackOut').value = res.feedback;
-  state.lastRow = Rubric.sheetRowTsv(state.lesson, parsed.inputs);
-  $('rowNote').textContent = `"העתקת שורה לגיליון" מעתיקה את העמודות ${state.lastRow.startCell}–${state.lastRow.endCell}: ` +
-    `יש לעמוד על התא ${state.lastRow.startCell} בשורת החניכה בגיליון "${state.lesson.sheet}" ולהדביק (Ctrl+V).`;
-  $('gradeOut').hidden = false;
+  btn.disabled = true;
+  try {
+    // Permission first, while the click still counts as a user gesture.
+    const fh = await findRubricFile(true);
+    if (!fh) throw new Error('קובץ המחוון לא נמצא בתיקיית הבסיס');
+
+    // Always work on the file as it is on disk right now (it may have been edited since it was loaded).
+    const bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer());
+    const wb = await Xlsx.readWorkbook(bytes);
+    const lesson = await Rubric.parseLesson(wb, state.lesson.sheet);
+
+    const parsed = Rubric.parseAiResponse($('aiAnswer').value, lesson);
+    const res = Rubric.computeRow(wb, lesson, parsed.inputs, student);
+    const warnings = [...parsed.warnings];
+    if (res.usedFallback) warnings.push('לא נמצאה נוסחת משוב תקינה בגיליון – המשוב נבנה בפורמט ברירת המחדל');
+    if (warnings.length) { warn.textContent = warnings.join('\n'); warn.hidden = false; }
+    $('gradeValue').textContent = res.grade === null ? '(אין נוסחת ציון בגיליון)' : res.grade;
+    $('feedbackOut').value = res.feedback;
+    $('gradeOut').hidden = false;
+
+    // Row: existing row of this student, otherwise the first empty row.
+    const loc = Rubric.findStudentRow(wb.sheet(lesson.sheet), lesson, student);
+    const values = {};
+    for (const f of lesson.fields) values[f.col] = parsed.inputs[f.col] !== undefined ? parsed.inputs[f.col] : null;
+    if (loc.isNew) values[lesson.nameCol] = student;
+    const cached = {};
+    if (lesson.gradeCol && res.grade !== null) cached[lesson.gradeCol] = res.grade;
+    if (lesson.feedbackCol && !res.usedFallback) cached[lesson.feedbackCol] = res.feedback;
+
+    const backup = await backupRubric(fh.name, bytes);
+    const out = await XlsxWrite.writeRow(bytes, wb.sheetPath(lesson.sheet), loc.row, values, cached);
+    try {
+      await FsStore.writeFile(state.base, fh.name, out);
+    } catch (e) {
+      throw new Error('לא ניתן לשמור את קובץ המחוון – ייתכן שהוא פתוח ב-Excel. יש לסגור אותו ולנסות שוב. (' + e.name + ')');
+    }
+
+    const where = `גיליון "${lesson.sheet}", שורה ${loc.row}`;
+    const head = loc.isNew ? `✓ נשמר בקובץ המחוון – ${where} (שורה חדשה)` : `✓ עודכן בקובץ המחוון – ${where} (${loc.matchedName})`;
+    setSaveStatus(head + (backup ? ` · גיבוי יומי: _גיבוי מחוון\\${backup}` : ''), 'ok');
+    state.wbKey = '';
+    state.lesson = null;
+    await updateLesson(false);
+  } catch (e) {
+    setSaveStatus(e.message, 'bad');
+  } finally {
+    btn.disabled = false;
+  }
 });
 $('copyFeedback').addEventListener('click', () => copyText($('feedbackOut').value, 'המשוב הועתק ✓'));
-$('copyRow').addEventListener('click', () => { if (state.lastRow) copyText(state.lastRow.tsv, 'השורה הועתקה ✓'); });
 
 // ---------- wiring ----------
 $('refresh').addEventListener('click', () => { state.ctxKey = ''; refresh(); });
