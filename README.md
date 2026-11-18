@@ -23,7 +23,18 @@ Solution\
    └─ _reference_for_AI.txt         ← official answers + rubric + solution code
 ```
 
-**העתקת פרומפט מלא ל-AI** copies the grading instructions, the reference material and the student summary as one text, ready to paste into an AI chat.
+It also writes `<שם הסטודנט> - חבילת AI.txt` in the same folder. **העתקת חבילה מלאה ל-AI** copies that same package, which contains:
+the grading instructions, the rubric for this lesson, the official solution, the student's submission, and the JSON answer format.
+
+## Master rubric (Excel)
+`Solution\מערכות הפעלה - מחוון בדיקת תרגילי בית.xlsx` is detected automatically. Any `*מחוון*.xlsx` file in the base folder works, or you can set the file name in the settings.
+- Each lesson is a **sheet** named `שיעור N`. The sheet is picked from the assignment number, and you can change it in the side panel.
+- Columns are identified by their header text (`שם החניכה`, category headers, `ניקוד`/`ציון`, `לשימור`, `לשיפור`, `פתיחת מדריכ.ה`, `משוב`), so lessons with different layouts all work.
+- The AI receives the weights (from `weights`), the 4-level criteria table, and the dropdown sentence lists for each category.
+- Paste the AI's answer into **תשובת ה-AI** and click **חישוב ציון ומשוב**. The grade and feedback are calculated by running the sheet's **own formulas**, the same ones in the grade and "משוב לחניכה (נגזר אוטומטית)" columns.
+  - Use **העתקת המשוב** to copy the feedback for Moodle.
+  - Use **העתקת שורה לגיליון** to copy the row, then paste it into the student's row in the sheet.
+- To check the formula engine, I ran it on all 71 filled rows in the workbook. It reproduced Excel's saved grade and feedback for every one.
 
 ## Notes
 - The student name, assignment number and target folder are filled in automatically and can be edited before saving.

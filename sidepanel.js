@@ -2,12 +2,13 @@
 const GRADER_RE = /^https:\/\/moodle\.cyber\.org\.il\/mod\/assign\/view\.php\?.*\baction=grader\b/;
 const REFERENCE_FILE = '_reference_for_AI.txt';
 const BOM = '﻿';
-const DEFAULT_SETTINGS = { folderTemplate: 'M_Week{n}', prompt: '' };
+const DEFAULT_SETTINGS = { folderTemplate: 'M_Week{n}', prompt: '', rubricFile: '' };
 
 const $ = (id) => document.getElementById(id);
 const state = {
   tabId: null, ctx: null, ctxKey: '', base: null, settings: { ...DEFAULT_SETTINGS },
   dirty: {}, summary: '', reference: '', referenceKey: '', activeTab: 'summary',
+  wb: null, wbKey: '', lesson: null, lessonText: '', lastRow: null,
 };
 
 // ---------- helpers ----------
@@ -55,16 +56,20 @@ async function loadSettings() {
   state.settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
   $('folderTemplate').value = state.settings.folderTemplate;
   $('promptTemplate').value = state.settings.prompt || Extract.DEFAULT_PROMPT;
+  $('rubricFile').value = state.settings.rubricFile;
 }
 $('saveSettings').addEventListener('click', async () => {
   const prompt = $('promptTemplate').value.trim();
+  const rubricChanged = $('rubricFile').value.trim() !== state.settings.rubricFile;
   state.settings = {
     folderTemplate: $('folderTemplate').value.trim() || DEFAULT_SETTINGS.folderTemplate,
     prompt: prompt === Extract.DEFAULT_PROMPT ? '' : prompt,
+    rubricFile: $('rubricFile').value.trim(),
   };
   await chrome.storage.sync.set(state.settings);
   if (!state.dirty.weekFolder) $('weekFolder').value = weekFor($('assignmentNumber').value.trim());
   updateDestPath();
+  if (rubricChanged) { state.wbKey = ''; await updateLesson(true); }
   $('saveSettings').textContent = 'נשמר ✓';
   setTimeout(() => ($('saveSettings').textContent = 'שמירה'), 1200);
 });
@@ -110,6 +115,8 @@ $('pickFolder').addEventListener('click', async () => {
     }
     renderFolder(warning ? `<span class="warn" style="display:block">${warning}</span>` : '');
     refreshReference(false);
+    state.wbKey = '';
+    updateLesson(false);
   } catch (e) {
     if (e.name !== 'AbortError') log('שגיאה בבחירת תיקייה: ' + e.message, 'err');
   }
@@ -119,8 +126,110 @@ $('forgetFolder').addEventListener('click', async () => {
   state.base = null;
   state.reference = '';
   state.referenceKey = '';
+  state.wb = null;
+  state.wbKey = '';
+  state.lesson = null;
   renderFolder();
+  updateLesson(false);
 });
+
+// ---------- master rubric workbook ----------
+async function findRubricFile(requestPermission) {
+  if (!state.base) return null;
+  if (!(await FsStore.ensurePermission(state.base, requestPermission))) return null;
+  if (state.settings.rubricFile) {
+    try { return await state.base.getFileHandle(state.settings.rubricFile); } catch (_) { return null; }
+  }
+  let best = null;
+  for await (const [name, h] of state.base.entries()) {
+    if (h.kind !== 'file' || !/\.xlsx$/i.test(name) || name.startsWith('~$')) continue;
+    if (!best || (/מחוון/.test(name) && !/מחוון/.test(best.name))) best = h;
+  }
+  return best;
+}
+
+// Loads (or reuses) the workbook; reloads automatically when the file changes on disk.
+async function loadWorkbook(requestPermission) {
+  const fh = await findRubricFile(requestPermission);
+  if (!fh) {
+    state.wb = null;
+    state.wbKey = '';
+    $('rubricFileName').textContent = state.base ? 'לא נמצא קובץ ‎.xlsx‎ עם "מחוון" בתיקיית הבסיס' : '—';
+    $('rubricFileName').classList.add('muted');
+    return null;
+  }
+  const file = await fh.getFile();
+  const key = file.name + ':' + file.lastModified;
+  if (state.wb && state.wbKey === key) return state.wb;
+  state.wb = await Xlsx.readWorkbook(new Uint8Array(await file.arrayBuffer()));
+  state.wbKey = key;
+  state.lesson = null;
+  $('rubricFileName').textContent = file.name;
+  $('rubricFileName').classList.remove('muted');
+  return state.wb;
+}
+
+function setLessonStatus(text, bad) {
+  $('lessonStatus').textContent = text;
+  $('lessonStatus').classList.toggle('bad', !!bad);
+}
+
+// Picks the "שיעור N" sheet for the current assignment number and parses it.
+async function updateLesson(requestPermission) {
+  const select = $('lessonSheet');
+  let wb;
+  try {
+    wb = await loadWorkbook(requestPermission);
+  } catch (e) {
+    setLessonStatus('שגיאה בקריאת קובץ המחוון: ' + e.message, true);
+    return null;
+  }
+  if (!wb) {
+    select.textContent = '';
+    state.lesson = null;
+    setLessonStatus(state.base ? 'קובץ המחוון לא נמצא / אין הרשאה – ייטען בלחיצה על "שמירת ההגשה"' : 'יש לבחור תיקיית בסיס כדי לטעון את המחוון', true);
+    return null;
+  }
+
+  const previous = select.value;
+  select.textContent = '';
+  select.appendChild(new Option('— ללא מחוון —', ''));
+  for (const n of wb.sheetNames.filter((s) => s !== 'weights')) select.appendChild(new Option(n, n));
+  select.value = state.dirty.lessonSheet ? previous : Rubric.findLessonSheet(wb, $('assignmentNumber').value.trim()) || '';
+
+  const sheet = select.value;
+  if (!sheet) {
+    state.lesson = null;
+    setLessonStatus(`לא נמצא גיליון "שיעור ${$('assignmentNumber').value.trim()}" בקובץ המחוון`, true);
+    return null;
+  }
+  if (!state.lesson || state.lesson.sheet !== sheet) {
+    try {
+      state.lesson = await Rubric.parseLesson(wb, sheet);
+    } catch (e) {
+      state.lesson = null;
+      setLessonStatus(e.message, true);
+      return null;
+    }
+    state.lessonText = Rubric.describeLesson(state.lesson);
+    $('outRubric').value = state.lessonText + '\n\n' + Rubric.responseInstructions(state.lesson);
+  }
+  const l = state.lesson;
+  const parts = [`${l.categories.length} קטגוריות`, `${l.fields.length} עמודות`];
+  parts.push(l.optionCount ? `${l.optionCount} משפטי משוב` : 'אין רשימות משפטים');
+  parts.push(l.hasRubricTable ? 'טבלת קריטריונים ✓' : 'אין טבלת קריטריונים');
+  if (l.gradeFormula) parts.push('נוסחת ציון ✓');
+  if (l.feedbackFormula) parts.push('נוסחת משוב ✓');
+  setLessonStatus(parts.join(' · '), !l.optionCount && !l.hasRubricTable);
+  return l;
+}
+
+$('lessonSheet').addEventListener('change', () => {
+  state.dirty.lessonSheet = true;
+  state.lesson = null;
+  updateLesson(false);
+});
+$('reloadRubric').addEventListener('click', () => { state.wbKey = ''; state.lesson = null; updateLesson(true); });
 
 // ---------- page context ----------
 function updateDestPath() {
@@ -133,7 +242,11 @@ function updateDestPath() {
 for (const id of ['studentName', 'assignmentNumber', 'weekFolder', 'onlineText']) {
   $(id).addEventListener('input', () => {
     state.dirty[id] = true;
-    if (id === 'assignmentNumber' && !state.dirty.weekFolder) $('weekFolder').value = weekFor($(id).value.trim());
+    if (id === 'assignmentNumber') {
+      if (!state.dirty.weekFolder) $('weekFolder').value = weekFor($(id).value.trim());
+      state.dirty.lessonSheet = false;
+      updateLesson(false);
+    }
     updateDestPath();
   });
 }
@@ -167,7 +280,13 @@ async function refresh() {
     state.ctxKey = key;
     state.dirty = {};
     state.summary = '';
+    state.lastRow = null;
     $('outSummary').value = '';
+    $('aiAnswer').value = '';
+    $('gradeOut').hidden = true;
+    $('aiWarnings').hidden = true;
+    $('aiCard').hidden = true;
+    $('results').hidden = true;
     clearLog();
     $('logCard').hidden = true;
   }
@@ -196,6 +315,7 @@ async function refresh() {
   }
   updateDestPath();
   refreshReference(false);
+  updateLesson(false);
 }
 
 // ---------- reference (official solution + rubric) ----------
@@ -302,6 +422,18 @@ async function processSubmission() {
       } else {
         log(`לא נמצאה התיקייה ${week}\\Solution – לא נוצרו חומרי ייחוס`, 'err');
       }
+
+      // Rubric for this lesson from the master Excel file.
+      state.wbKey = ''; // re-read so recent edits to the Excel file are picked up
+      const lesson = await updateLesson(true);
+      if (lesson) {
+        log(`מחוון: גיליון "${lesson.sheet}" – ${lesson.fields.length} עמודות, ${lesson.optionCount} משפטי משוב`, 'ok');
+      } else {
+        log('לא נטען מחוון מקובץ ה-Excel – החבילה תכלול רק את הפתרון', 'err');
+      }
+      const packageName = `${name} - חבילת AI.txt`;
+      await FsStore.writeFile(weekDir, packageName, textBlob(buildPackage()));
+      log(`נשמר: ${week}\\${packageName}`, 'ok');
     } else {
       // Fallback: chrome.downloads can only save under the Downloads folder.
       if (zipBytes) await downloadBlob(new Blob([zipBytes], { type: 'application/zip' }), `${week}/${zipName}`);
@@ -310,6 +442,7 @@ async function processSubmission() {
     }
 
     $('results').hidden = false;
+    $('aiCard').hidden = !state.lesson;
     showTab('summary');
   } catch (e) {
     log(e.message, 'err');
@@ -332,12 +465,24 @@ function showTab(name) {
   state.activeTab = name;
   for (const b of document.querySelectorAll('.tab')) b.classList.toggle('active', b.dataset.tab === name);
   $('outSummary').hidden = name !== 'summary';
+  $('outRubric').hidden = name !== 'rubric';
   $('outReference').hidden = name !== 'reference';
+}
+
+function buildPackage() {
+  return Extract.buildAiPrompt({
+    template: state.settings.prompt,
+    rubric: state.lesson ? state.lessonText : '',
+    reference: state.reference,
+    summary: state.summary,
+    response: state.lesson ? Rubric.responseInstructions(state.lesson) : '',
+  });
 }
 for (const b of document.querySelectorAll('.tab')) {
   b.addEventListener('click', async () => {
     showTab(b.dataset.tab);
     if (b.dataset.tab === 'reference' && !state.reference) await refreshReference(true);
+    if (b.dataset.tab === 'rubric' && !state.lesson) await updateLesson(true);
   });
 }
 
@@ -355,18 +500,48 @@ async function copyText(text, note) {
   $('copyNote').textContent = `${note} (${text.length.toLocaleString()} תווים)`;
 }
 $('copyTab').addEventListener('click', () => {
-  const t = state.activeTab === 'summary' ? state.summary : state.reference;
+  const t = { summary: state.summary, reference: state.reference, rubric: $('outRubric').value }[state.activeTab];
   if (t) copyText(t, 'הועתק ✓');
 });
 $('copyPrompt').addEventListener('click', async () => {
   if (!state.summary) return;
   if (!state.reference && state.base) await refreshReference(true);
-  if (!state.reference) {
-    await copyText(Extract.buildAiPrompt('(לא נמצאו חומרי ייחוס – יש לצרף פתרון ומחוון ידנית)', state.summary, state.settings.prompt), 'הועתק ללא חומרי ייחוס ⚠️');
+  if (!state.lesson && state.base) await updateLesson(true);
+  const missing = [!state.reference && 'פתרון', !state.lesson && 'מחוון'].filter(Boolean);
+  await copyText(buildPackage(), missing.length
+    ? `הועתק ללא ${missing.join(' ו')} ⚠️`
+    : 'חבילה מלאה הועתקה ✓ – להדביק בצ׳אט AI, ואת התשובה להדביק למטה');
+  $('aiCard').hidden = !state.lesson;
+});
+
+// ---------- AI answer -> grade + feedback (evaluated with the sheet's own formulas) ----------
+$('computeGrade').addEventListener('click', () => {
+  const warn = $('aiWarnings');
+  warn.hidden = true;
+  $('gradeOut').hidden = true;
+  if (!state.lesson || !state.wb) { warn.textContent = 'המחוון לא נטען'; warn.hidden = false; return; }
+  let parsed;
+  try {
+    parsed = Rubric.parseAiResponse($('aiAnswer').value, state.lesson);
+  } catch (e) {
+    warn.textContent = e.message;
+    warn.hidden = false;
     return;
   }
-  await copyText(Extract.buildAiPrompt(state.reference, state.summary, state.settings.prompt), 'פרומפט מלא הועתק ✓ – אפשר להדביק בצ׳אט AI');
+  const res = Rubric.computeRow(state.wb, state.lesson, parsed.inputs, $('studentName').value.trim());
+  const warnings = [...parsed.warnings];
+  if (res.usedFallback) warnings.push('לא נמצאה נוסחת משוב תקינה בגיליון – המשוב נבנה בפורמט ברירת המחדל');
+  if (warnings.length) { warn.textContent = warnings.join('\n'); warn.hidden = false; }
+
+  $('gradeValue').textContent = res.grade === null ? '(אין נוסחת ציון בגיליון)' : res.grade;
+  $('feedbackOut').value = res.feedback;
+  state.lastRow = Rubric.sheetRowTsv(state.lesson, parsed.inputs);
+  $('rowNote').textContent = `"העתקת שורה לגיליון" מעתיקה את העמודות ${state.lastRow.startCell}–${state.lastRow.endCell}: ` +
+    `יש לעמוד על התא ${state.lastRow.startCell} בשורת החניכה בגיליון "${state.lesson.sheet}" ולהדביק (Ctrl+V).`;
+  $('gradeOut').hidden = false;
 });
+$('copyFeedback').addEventListener('click', () => copyText($('feedbackOut').value, 'המשוב הועתק ✓'));
+$('copyRow').addEventListener('click', () => { if (state.lastRow) copyText(state.lastRow.tsv, 'השורה הועתקה ✓'); });
 
 // ---------- wiring ----------
 $('refresh').addEventListener('click', () => { state.ctxKey = ''; refresh(); });

@@ -48,7 +48,17 @@ button:hover { border-color: var(--accent); }
 button:disabled { opacity: .55; cursor: default; }
 button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
 button.ghost { background: transparent; }
-#process { width: 100%; padding: 9px; margin-top: 10px; }
+#process, .wide { width: 100%; padding: 9px; margin-top: 10px; }
+select {
+  display: block; width: 100%; margin-top: 3px; padding: 6px 8px; font: inherit; font-weight: 400;
+  color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+}
+.rubric-row { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.lesson-status { margin: -4px 0 8px; }
+.lesson-status.bad { color: var(--err); }
+.grade-line { margin: 10px 0 6px; }
+.grade { font-size: 22px; font-weight: 700; color: var(--accent); }
+#aiWarnings { margin-top: 8px; white-space: pre-line; }
 ul#fileList { list-style: none; padding: 0; margin: 4px 0 8px; }
 ul#fileList li { padding: 3px 6px; border-radius: 4px; background: var(--code-bg); margin-bottom: 3px; font-size: 13px; word-break: break-all; }
 ol#log { margin: 4px 0 0; padding-inline-start: 18px; font-size: 13px; }

@@ -20,6 +20,13 @@
       <button id="pickFolder">בחירת תיקייה</button>
     </div>
     <p id="folderHint" class="hint">יש לבחור את התיקייה <b>Solution</b> (‏Desktop\Projects\Solution). הקבצים יישמרו ב-<code>M_WeekN</code> שבתוכה.</p>
+    <div class="row rubric-row">
+      <div>
+        <div class="label">קובץ מחוון (Excel)</div>
+        <div id="rubricFileName" class="value muted">—</div>
+      </div>
+      <button id="reloadRubric" class="ghost" title="טעינה מחדש של קובץ המחוון">⟳</button>
+    </div>
   </section>
 
   <section class="card" id="notGrader" hidden>
@@ -39,6 +46,10 @@
         <input id="weekFolder" type="text" dir="ltr">
       </label>
     </div>
+    <label>גיליון מחוון
+      <select id="lessonSheet"></select>
+    </label>
+    <div id="lessonStatus" class="hint lesson-status"></div>
     <div class="meta">
       <div><span class="label">מטלה:</span> <span id="assignmentTitle"></span></div>
       <div><span class="label">userid:</span> <span id="userid" dir="ltr"></span></div>
@@ -64,21 +75,44 @@
   <section class="card" id="results" hidden>
     <div class="tabs" role="tablist">
       <button class="tab active" data-tab="summary">סיכום סטודנט</button>
-      <button class="tab" data-tab="reference">פתרון ומחוון</button>
+      <button class="tab" data-tab="rubric">מחוון</button>
+      <button class="tab" data-tab="reference">פתרון</button>
     </div>
     <textarea id="outSummary" class="out" readonly dir="auto"></textarea>
+    <textarea id="outRubric" class="out" readonly dir="auto" hidden></textarea>
     <textarea id="outReference" class="out" readonly dir="auto" hidden></textarea>
     <div class="actions">
       <button id="copyTab">העתקת הלשונית</button>
-      <button id="copyPrompt" class="primary">העתקת פרומפט מלא ל-AI</button>
+      <button id="copyPrompt" class="primary">העתקת חבילה מלאה ל-AI</button>
     </div>
     <div id="copyNote" class="hint"></div>
+  </section>
+
+  <section class="card" id="aiCard" hidden>
+    <div class="label">תשובת ה-AI → ציון ומשוב (לפי נוסחאות הגיליון)</div>
+    <textarea id="aiAnswer" rows="5" dir="auto" placeholder="יש להדביק כאן את כל תשובת ה-AI (כולל בלוק ה-JSON)"></textarea>
+    <button id="computeGrade" class="primary wide">חישוב ציון ומשוב</button>
+    <div id="aiWarnings" class="warn" hidden></div>
+    <div id="gradeOut" hidden>
+      <div class="grade-line"><span class="label">ציון מחושב:</span> <span id="gradeValue" class="grade"></span></div>
+      <label>משוב לחניכה (נגזר אוטומטית)
+        <textarea id="feedbackOut" rows="12" dir="auto"></textarea>
+      </label>
+      <div class="actions">
+        <button id="copyFeedback" class="primary">העתקת המשוב</button>
+        <button id="copyRow">העתקת שורה לגיליון</button>
+      </div>
+      <div id="rowNote" class="hint"></div>
+    </div>
   </section>
 
   <details class="card" id="settings">
     <summary>הגדרות</summary>
     <label>תבנית שם תיקייה (‎{n}‎ = מספר מטלה)
       <input id="folderTemplate" type="text" dir="ltr" placeholder="M_Week{n}">
+    </label>
+    <label>שם קובץ המחוון בתיקיית הבסיס (ריק = זיהוי אוטומטי של ‎*מחוון*.xlsx)
+      <input id="rubricFile" type="text" dir="auto" placeholder="מערכות הפעלה - מחוון בדיקת תרגילי בית.xlsx">
     </label>
     <label>הנחיית בדיקה ל-AI
       <textarea id="promptTemplate" rows="8"></textarea>
@@ -92,6 +126,9 @@
 
   <script src="lib/zip.js"></script>
   <script src="lib/extract.js"></script>
+  <script src="lib/formula.js"></script>
+  <script src="lib/xlsx.js"></script>
+  <script src="lib/rubric.js"></script>
   <script src="lib/fsstore.js"></script>
   <script src="sidepanel.js"></script>
 </body>
