@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Moodle Grader Assistant",
+  "short_name": "Grader",
+  "version": "1.0.0",
+  "description": "שמירת הגשות מ-Moodle לתיקיית M_WeekN, יצירת סיכום הגשה והכנת חומרי ייחוס לבדיקת AI.",
+  "permissions": ["sidePanel", "storage", "downloads", "scripting", "tabs"],
+  "host_permissions": ["https://moodle.cyber.org.il/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Moodle Grader Assistant" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "content_scripts": [
+    {
+      "matches": ["https://moodle.cyber.org.il/mod/assign/view.php*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+}

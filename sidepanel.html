@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>Moodle Grader Assistant</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header>
+    <h1>בודק מטלות Moodle</h1>
+    <button id="refresh" class="ghost" title="רענון נתונים מהעמוד">⟳</button>
+  </header>
+
+  <section class="card" id="folderCard">
+    <div class="row">
+      <div>
+        <div class="label">תיקיית בסיס</div>
+        <div id="folderName" class="value muted">לא נבחרה</div>
+      </div>
+      <button id="pickFolder">בחירת תיקייה</button>
+    </div>
+    <p id="folderHint" class="hint">יש לבחור את התיקייה <b>Solution</b> (‏Desktop\Projects\Solution). הקבצים יישמרו ב-<code>M_WeekN</code> שבתוכה.</p>
+  </section>
+
+  <section class="card" id="notGrader" hidden>
+    <p>יש לפתוח עמוד בדיקה של מטלה ב-Moodle:<br><code dir="ltr">moodle.cyber.org.il/mod/assign/view.php?…&amp;action=grader&amp;userid=…</code></p>
+  </section>
+
+  <section class="card" id="ctxCard" hidden>
+    <div id="loadingNote" class="warn" hidden>העמוד עדיין טוען את הסטודנט/ית… הנתונים יתעדכנו אוטומטית.</div>
+    <label>שם הסטודנט/ית (שם הקובץ)
+      <input id="studentName" type="text">
+    </label>
+    <div class="grid2">
+      <label>מספר מטלה
+        <input id="assignmentNumber" type="text" inputmode="numeric">
+      </label>
+      <label>תיקיית יעד
+        <input id="weekFolder" type="text" dir="ltr">
+      </label>
+    </div>
+    <div class="meta">
+      <div><span class="label">מטלה:</span> <span id="assignmentTitle"></span></div>
+      <div><span class="label">userid:</span> <span id="userid" dir="ltr"></span></div>
+      <div id="destPath" class="path" dir="ltr"></div>
+    </div>
+
+    <div class="label">קבצי הגשה</div>
+    <ul id="fileList"></ul>
+
+    <details>
+      <summary>טקסט מקוון (אם הוגש)</summary>
+      <textarea id="onlineText" rows="4" placeholder="טקסט שהוגש ישירות ב-Moodle (מתמלא אוטומטית אם נמצא)"></textarea>
+    </details>
+
+    <button id="process" class="primary">שמירת ההגשה ויצירת סיכום</button>
+  </section>
+
+  <section class="card" id="logCard" hidden>
+    <div class="label">סטטוס</div>
+    <ol id="log"></ol>
+  </section>
+
+  <section class="card" id="results" hidden>
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="summary">סיכום סטודנט</button>
+      <button class="tab" data-tab="reference">פתרון ומחוון</button>
+    </div>
+    <textarea id="outSummary" class="out" readonly dir="auto"></textarea>
+    <textarea id="outReference" class="out" readonly dir="auto" hidden></textarea>
+    <div class="actions">
+      <button id="copyTab">העתקת הלשונית</button>
+      <button id="copyPrompt" class="primary">העתקת פרומפט מלא ל-AI</button>
+    </div>
+    <div id="copyNote" class="hint"></div>
+  </section>
+
+  <details class="card" id="settings">
+    <summary>הגדרות</summary>
+    <label>תבנית שם תיקייה (‎{n}‎ = מספר מטלה)
+      <input id="folderTemplate" type="text" dir="ltr" placeholder="M_Week{n}">
+    </label>
+    <label>הנחיית בדיקה ל-AI
+      <textarea id="promptTemplate" rows="8"></textarea>
+    </label>
+    <div class="actions">
+      <button id="saveSettings">שמירה</button>
+      <button id="resetPrompt" class="ghost">איפוס הנחיה</button>
+      <button id="forgetFolder" class="ghost">שכחת תיקייה</button>
+    </div>
+  </details>
+
+  <script src="lib/zip.js"></script>
+  <script src="lib/extract.js"></script>
+  <script src="lib/fsstore.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
