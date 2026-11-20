@@ -14,18 +14,32 @@
   <section class="card" id="folderCard">
     <div class="row">
       <div>
-        <div class="label">תיקיית בסיס</div>
+        <div class="label">תיקיית שורש (Solution)</div>
         <div id="folderName" class="value muted">לא נבחרה</div>
       </div>
-      <button id="pickFolder">בחירת תיקייה</button>
-    </div>
-    <p id="folderHint" class="hint">יש לבחור את התיקייה <b>Solution</b> (‏Desktop\Projects\Solution). הקבצים יישמרו ב-<code>M_WeekN</code> שבתוכה.</p>
-    <div class="row rubric-row">
-      <div>
-        <div class="label">קובץ מחוון (Excel)</div>
-        <div id="rubricFileName" class="value muted">—</div>
+      <div class="btns">
+        <button id="rescan" class="ghost" title="סריקה מחדש של תיקיות M_WeekN" hidden>סריקה מחדש</button>
+        <button id="pickFolder">בחירת תיקיית Solution</button>
       </div>
-      <button id="reloadRubric" class="ghost" title="טעינה מחדש של קובץ המחוון">⟳</button>
+    </div>
+    <button id="reauth" class="primary wide" hidden>🔒 אישור גישה מחדש לתיקייה</button>
+    <p id="folderHint" class="hint">יש לבחור פעם אחת את התיקייה <b>Solution</b> (‏Desktop\Projects\Solution) שמכילה את תיקיות <code>M_WeekN</code>.</p>
+    <div class="rubric-row">
+      <label id="weekRow" hidden>שבוע
+        <select id="weekSelect"></select>
+      </label>
+      <div id="weekHint" class="hint week-hint" hidden></div>
+      <div class="row">
+        <div>
+          <div class="label">קובץ מחוון (Excel)</div>
+          <div id="rubricFileName" class="value path-line muted" dir="ltr">—</div>
+        </div>
+        <button id="reloadRubric" class="ghost" title="טעינה מחדש של קובץ המחוון">⟳</button>
+      </div>
+      <div id="rubricMissing" hidden>
+        <div id="rubricMissingText" class="warn"></div>
+        <button id="pickRubricFile">בחירת קובץ מחוון ידנית…</button>
+      </div>
     </div>
   </section>
 
@@ -110,7 +124,7 @@
     <label>תבנית שם תיקייה (‎{n}‎ = מספר מטלה)
       <input id="folderTemplate" type="text" dir="ltr" placeholder="M_Week{n}">
     </label>
-    <label>שם קובץ המחוון בתיקיית הבסיס (ריק = זיהוי אוטומטי של ‎*מחוון*.xlsx)
+    <label>שם קובץ המחוון בתיקיית M_WeekN\Solution (ריק = זיהוי אוטומטי)
       <input id="rubricFile" type="text" dir="auto" placeholder="מערכות הפעלה - מחוון בדיקת תרגילי בית.xlsx">
     </label>
     <label>הנחיית בדיקה ל-AI
@@ -130,6 +144,7 @@
   <script src="lib/rubric.js"></script>
   <script src="lib/xlsxwrite.js"></script>
   <script src="lib/fsstore.js"></script>
+  <script src="lib/discover.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>

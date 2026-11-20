@@ -9,6 +9,9 @@ const state = {
   tabId: null, ctx: null, ctxKey: '', base: null, settings: { ...DEFAULT_SETTINGS },
   dirty: {}, summary: '', reference: '', referenceKey: '', activeTab: 'summary',
   wb: null, wbKey: '', lesson: null, lessonText: '', lastRow: null,
+  // week discovery (lib/discover.js)
+  weeks: {}, week: null, weekSource: '', pageWeek: null, weekOverride: null, lastWeek: null, cmid: '',
+  rootStatus: 'none', scanError: '', manualRubric: null, rubricProblem: '', rubricManualOk: true,
 };
 
 // ---------- helpers ----------
@@ -67,105 +70,314 @@ $('saveSettings').addEventListener('click', async () => {
     rubricFile: $('rubricFile').value.trim(),
   };
   await chrome.storage.sync.set(state.settings);
-  if (!state.dirty.weekFolder) $('weekFolder').value = weekFor($('assignmentNumber').value.trim());
-  updateDestPath();
+  syncWeekFolder();
   if (rubricChanged) { state.wbKey = ''; await updateLesson(true); }
   $('saveSettings').textContent = 'נשמר ✓';
   setTimeout(() => ($('saveSettings').textContent = 'שמירה'), 1200);
 });
 $('resetPrompt').addEventListener('click', () => ($('promptTemplate').value = Extract.DEFAULT_PROMPT));
 
-// ---------- base folder ----------
+// ---------- root folder ----------
+const escHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const warnHtml = (s) => `<span class="warn" style="display:block">${s}</span>`;
+
 async function loadFolder() {
   state.base = (await FsStore.get('base')) || null;
-  renderFolder();
+  state.manualRubric = (await FsStore.get('manualRubric')) || null;
+  const { lastWeek } = await chrome.storage.local.get({ lastWeek: null });
+  state.lastWeek = lastWeek;
+  await rescan(); // no prompt here: requestPermission() needs a click (see "reauth")
 }
-function renderFolder(warning) {
+
+function renderFolder() {
   const name = $('folderName');
   const hint = $('folderHint');
-  if (state.base) {
-    name.textContent = state.base.name;
-    name.classList.remove('muted');
-    $('pickFolder').textContent = 'החלפה';
-    hint.innerHTML = warning ||
-      `קובץ ה-ZIP והסיכום יישמרו ב-<code>${state.base.name}\\M_WeekN\\</code> (ליד התיקייה Solution).`;
-  } else {
+  $('reauth').hidden = !(state.base && state.rootStatus === 'needsPermission');
+  $('rescan').hidden = !state.base;
+  if (!state.base) {
     name.textContent = 'לא נבחרה';
     name.classList.add('muted');
-    $('pickFolder').textContent = 'בחירת תיקייה';
-    hint.innerHTML = 'יש לבחור את התיקייה <b>Solution</b> (‏Desktop\\Projects\\Solution). ' +
+    $('pickFolder').textContent = 'בחירת תיקיית Solution';
+    hint.innerHTML = 'יש לבחור פעם אחת את התיקייה <b>Solution</b> (‏Desktop\\Projects\\Solution) שמכילה את תיקיות <code>M_WeekN</code>. ' +
       'בלי בחירה, הקבצים יישמרו בתיקיית ההורדות (Downloads\\M_WeekN) ולא ייווצרו חומרי ייחוס.';
+    updateDestPath();
+    return;
+  }
+  const rootName = escHtml(state.base.name);
+  name.textContent = state.base.name;
+  name.classList.remove('muted');
+  $('pickFolder').textContent = 'החלפה';
+  const count = Object.keys(state.weeks).length;
+  if (state.rootStatus === 'needsPermission') {
+    hint.innerHTML = warnHtml('🔒 אין הרשאת גישה לתיקייה (למשל אחרי הפעלה מחדש של הדפדפן). יש ללחוץ על "אישור גישה מחדש".');
+  } else if (state.rootStatus === 'gone') {
+    hint.innerHTML = warnHtml(`⚠️ התיקייה <code>${rootName}</code> לא נמצאה – ייתכן שהועברה, נמחקה או ששמה שונה. יש לבחור אותה מחדש.`);
+  } else if (state.rootStatus === 'error') {
+    hint.innerHTML = warnHtml('⚠️ שגיאה בסריקת התיקייה: ' + escHtml(state.scanError));
+  } else if (!count && Discover.WEEK_DIR_RE.test(state.base.name)) {
+    hint.innerHTML = warnHtml(`⚠️ נבחרה התיקייה <code>${rootName}</code>. יש לבחור את תיקיית ההורה (Solution), אחרת תיווצר תיקייה מקוננת.`);
+  } else if (!count) {
+    hint.innerHTML = warnHtml('⚠️ לא נמצאו תיקיות M_WeekN בתוך התיקייה שנבחרה. ייתכן שנבחרה תיקיית Solution של שבוע ולא תיקיית השורש.');
+  } else {
+    hint.innerHTML = `נמצאו ${count} תיקיות שבוע. קובץ ה-ZIP והסיכום יישמרו ב-<code>${rootName}\\M_WeekN\\</code>.`;
   }
   updateDestPath();
 }
+
+// Rebuilds the week map from disk. Never prompts unless `request` is set (only from a click).
+async function rescan({ request = false } = {}) {
+  state.weeks = {};
+  state.scanError = '';
+  if (!state.base) {
+    state.rootStatus = 'none';
+  } else {
+    let ok = false;
+    try { ok = await FsStore.ensurePermission(state.base, request); } catch (_) { /* e.g. root deleted */ }
+    if (!ok) {
+      state.rootStatus = 'needsPermission';
+    } else {
+      try {
+        state.weeks = await Discover.discoverWeeks(state.base);
+        state.rootStatus = 'ok';
+      } catch (e) {
+        const kind = Discover.classifyError(e);
+        state.rootStatus = kind === 'gone' ? 'gone' : kind === 'permission' ? 'needsPermission' : 'error';
+        state.scanError = e.message;
+      }
+    }
+  }
+  renderFolder();
+  chooseWeek();
+}
+
 $('pickFolder').addEventListener('click', async () => {
   try {
     const h = await window.showDirectoryPicker({ id: 'moodle-grader-base', mode: 'readwrite', startIn: 'desktop' });
     await FsStore.set('base', h);
     state.base = h;
-    state.referenceKey = '';
-    let warning = '';
-    if (/^M_Week\d+$/i.test(h.name)) {
-      warning = `⚠️ נבחרה התיקייה <code>${h.name}</code>. יש לבחור את תיקיית ההורה (Solution), אחרת תיווצר תיקייה מקוננת.`;
-    } else if (h.name === 'Solution') {
-      // Could be the base or a week's Solution subfolder: check for M_Week* children.
-      let hasWeeks = false;
-      for await (const [n, c] of h.entries()) if (c.kind === 'directory' && /^M_Week/i.test(n)) { hasWeeks = true; break; }
-      if (!hasWeeks) warning = '⚠️ לא נמצאו תיקיות M_Week בתוך התיקייה שנבחרה. ייתכן שנבחרה תיקיית Solution של שבוע ולא תיקיית הבסיס.';
-    }
-    renderFolder(warning ? `<span class="warn" style="display:block">${warning}</span>` : '');
-    refreshReference(false);
-    state.wbKey = '';
-    updateLesson(false);
+    await rescan();
+    reloadMaterials(false);
   } catch (e) {
     if (e.name !== 'AbortError') log('שגיאה בבחירת תיקייה: ' + e.message, 'err');
   }
+});
+$('reauth').addEventListener('click', async () => {
+  await rescan({ request: true });
+  if (state.rootStatus === 'needsPermission') log('הגישה לתיקייה לא אושרה', 'err');
+  reloadMaterials(false);
+});
+$('rescan').addEventListener('click', async () => {
+  await rescan({ request: true });
+  reloadMaterials(false);
 });
 $('forgetFolder').addEventListener('click', async () => {
   await FsStore.del('base');
   state.base = null;
   state.reference = '';
-  state.referenceKey = '';
+  state.lesson = null;
+  await rescan();
+  reloadMaterials(false);
+});
+
+// Forgets cached workbook/solution so they are re-read for the current week.
+function reloadMaterials(requestPermission) {
   state.wb = null;
   state.wbKey = '';
   state.lesson = null;
-  renderFolder();
-  updateLesson(false);
-});
-
-// ---------- master rubric workbook ----------
-async function findRubricFile(requestPermission) {
-  if (!state.base) return null;
-  if (!(await FsStore.ensurePermission(state.base, requestPermission))) return null;
-  if (state.settings.rubricFile) {
-    try { return await state.base.getFileHandle(state.settings.rubricFile); } catch (_) { return null; }
-  }
-  let best = null;
-  for await (const [name, h] of state.base.entries()) {
-    if (h.kind !== 'file' || !/\.xlsx$/i.test(name) || name.startsWith('~$')) continue;
-    if (!best || (/מחוון/.test(name) && !/מחוון/.test(best.name))) best = h;
-  }
-  return best;
+  state.referenceKey = '';
+  refreshReference(requestPermission);
+  return updateLesson(requestPermission);
 }
 
+// ---------- week selection ----------
+const weekNumbers = () => Object.keys(state.weeks).map(Number).sort((a, b) => a - b);
+const selectedWeek = () => (state.week !== null && state.weeks[state.week]) || null;
+const toWeekNum = (s) => (/^\s*\d+\s*$/.test(s || '') ? parseInt(s, 10) : null);
+
+// Week number suggested by the Moodle page (or by the assignment number the user typed).
+function pageWeekNumber() {
+  const typed = toWeekNum($('assignmentNumber').value);
+  if (state.dirty.assignmentNumber) return typed;
+  const fromTitle = state.ctx ? Discover.weekFromTitle(state.ctx.assignmentTitle) : null;
+  return fromTitle !== null ? fromTitle : typed;
+}
+
+// Priority: manual choice for this assignment > page title > last used > highest week.
+function chooseWeek() {
+  const has = (n) => n !== null && n !== undefined && !!state.weeks[n];
+  const fromPage = pageWeekNumber();
+  let week = null, source = '';
+  if (has(state.weekOverride)) { week = state.weekOverride; source = 'manual'; }
+  else if (has(fromPage)) { week = fromPage; source = 'page'; }
+  else if (has(state.lastWeek)) { week = state.lastWeek; source = 'last'; }
+  else if (weekNumbers().length) { week = weekNumbers().pop(); source = 'max'; }
+  const changed = week !== state.week;
+  state.week = week;
+  state.weekSource = source;
+  state.pageWeek = fromPage;
+  if (changed) { state.wb = null; state.wbKey = ''; state.lesson = null; state.referenceKey = ''; }
+  renderWeeks();
+  syncWeekFolder();
+  return changed;
+}
+
+function renderWeeks() {
+  const select = $('weekSelect');
+  const nums = weekNumbers();
+  $('weekRow').hidden = !nums.length;
+  select.textContent = '';
+  for (const n of nums) {
+    const e = state.weeks[n];
+    select.appendChild(new Option(e.weekDirHandle.name + (e.xlsxHandle ? '' : ' (אין XLSX)'), String(n)));
+  }
+  select.value = state.week !== null ? String(state.week) : '';
+  const hint = $('weekHint');
+  const p = state.pageWeek;
+  let text = '';
+  if (nums.length && state.weekSource !== 'manual') {
+    if (state.weekSource === 'page') text = `נבחר אוטומטית לפי שם המטלה (${p}).`;
+    else if (p !== null) text = `⚠️ לא נמצאה תיקיית שבוע ${p} – נבחר ${state.weeks[state.week].weekDirHandle.name}. אפשר לשנות.`;
+  }
+  hint.textContent = text;
+  hint.hidden = !text;
+}
+
+$('weekSelect').addEventListener('change', async () => {
+  const n = toWeekNum($('weekSelect').value);
+  state.weekOverride = n;
+  state.lastWeek = n;
+  await chrome.storage.local.set({ lastWeek: n });
+  chooseWeek();
+  reloadMaterials(false);
+});
+
+// The destination folder follows the selected week when it matches the page (or was chosen by hand);
+// otherwise it stays M_Week<assignment number>, which is created on save if missing.
+function defaultWeekFolder() {
+  const e = selectedWeek();
+  if (e && (state.weekSource === 'manual' || state.weekSource === 'page')) return e.weekDirHandle.name;
+  return weekFor($('assignmentNumber').value.trim()) || (e ? e.weekDirHandle.name : '');
+}
+function syncWeekFolder() {
+  if (!state.dirty.weekFolder) $('weekFolder').value = defaultWeekFolder();
+  updateDestPath();
+}
+
+// ---------- master rubric workbook ----------
+function setRubricLabel(label, problem, showManual) {
+  const el = $('rubricFileName');
+  el.textContent = '';
+  if (label) {
+    // <bdi> keeps a Hebrew file name readable inside the left-to-right path.
+    const parts = label.split(' → ');
+    parts.forEach((p, i) => {
+      const b = document.createElement('bdi');
+      b.textContent = p;
+      el.appendChild(b);
+      if (i < parts.length - 1) el.appendChild(document.createTextNode(' → '));
+    });
+  } else {
+    el.textContent = '—';
+  }
+  el.classList.toggle('muted', !label);
+  $('rubricMissing').hidden = !problem;
+  $('rubricMissingText').textContent = problem || '';
+  $('pickRubricFile').hidden = !showManual;
+}
+
+// -> { handle, dir, label } or null. Sets state.rubricProblem / state.rubricManualOk when not found.
+async function findRubricFile(requestPermission) {
+  state.rubricProblem = '';
+  state.rubricManualOk = true;
+  if (state.base) {
+    let ok = false;
+    try { ok = await FsStore.ensurePermission(state.base, requestPermission); } catch (_) { /* root gone */ }
+    if (!ok) {
+      if (state.rootStatus !== 'needsPermission') { state.rootStatus = 'needsPermission'; renderFolder(); }
+      state.rubricProblem = 'אין הרשאת גישה לתיקיית השורש – יש ללחוץ על "אישור גישה מחדש".';
+      state.rubricManualOk = false;
+      return null;
+    }
+    if (state.rootStatus !== 'ok') await rescan(); // permission was just granted, or the root is back
+    const e = selectedWeek();
+    if (e) {
+      if (state.settings.rubricFile) {
+        try {
+          const h = await e.solutionDirHandle.getFileHandle(state.settings.rubricFile);
+          return { handle: h, dir: e.solutionDirHandle, label: Discover.pathLabel(e, h.name) };
+        } catch (_) { /* fall through to auto-detection */ }
+      }
+      if (e.xlsxHandle) return { handle: e.xlsxHandle, dir: e.solutionDirHandle, label: Discover.pathLabel(e, e.xlsxHandle.name) };
+      state.rubricProblem = `לא נמצא קובץ XLSX בתיקיית ${Discover.dirLabel(e)}`;
+    } else if (state.rootStatus === 'gone') {
+      state.rubricProblem = 'תיקיית השורש לא נמצאה (הועברה או נמחקה) – יש לבחור אותה מחדש.';
+    } else if (state.rootStatus === 'ok') {
+      state.rubricProblem = 'לא נמצאו תיקיות M_WeekN בתיקיית השורש.';
+    }
+    // Legacy layout: the workbook directly in the root folder.
+    if (state.rootStatus === 'ok') {
+      for await (const [name, h] of state.base.entries()) {
+        if (h.kind === 'file' && /\.xls[xm]$/i.test(name) && !Discover.isTempFile(name) &&
+            (name === state.settings.rubricFile || /מחוון|rubric/i.test(name))) {
+          return { handle: h, dir: state.base, label: state.base.name + ' → ' + name };
+        }
+      }
+    }
+  } else {
+    state.rubricProblem = 'לא נבחרה תיקיית שורש – יש לבחור את תיקיית Solution או קובץ מחוון ידנית.';
+  }
+  // Manual fallback: a workbook picked by hand earlier.
+  if (state.manualRubric) {
+    let ok = false;
+    try { ok = await FsStore.ensurePermission(state.manualRubric, requestPermission); } catch (_) { /* file gone */ }
+    if (ok) return { handle: state.manualRubric, dir: null, label: state.manualRubric.name + ' (נבחר ידנית)' };
+  }
+  return null;
+}
+
+$('pickRubricFile').addEventListener('click', async () => {
+  try {
+    const [h] = await window.showOpenFilePicker({
+      id: 'moodle-grader-rubric', startIn: selectedWeek() ? selectedWeek().solutionDirHandle : 'desktop',
+      types: [{ description: 'Excel', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx', '.xlsm'] } }],
+    });
+    if (!(await FsStore.ensurePermission(h, true))) throw new Error('לא ניתנה הרשאת כתיבה לקובץ');
+    await FsStore.set('manualRubric', h);
+    state.manualRubric = h;
+    reloadMaterials(false);
+  } catch (e) {
+    if (e.name !== 'AbortError') setLessonStatus('שגיאה בבחירת קובץ: ' + e.message, true);
+  }
+});
+
 // Loads (or reuses) the workbook; reloads automatically when the file changes on disk.
-async function loadWorkbook(requestPermission) {
-  const fh = await findRubricFile(requestPermission);
-  if (!fh) {
+async function loadWorkbook(requestPermission, retried) {
+  const found = await findRubricFile(requestPermission);
+  if (!found) {
     state.wb = null;
     state.wbKey = '';
-    $('rubricFileName').textContent = state.base ? 'לא נמצא קובץ ‎.xlsx‎ עם "מחוון" בתיקיית הבסיס' : '—';
-    $('rubricFileName').classList.add('muted');
+    setRubricLabel('', state.rubricProblem, state.rubricManualOk);
     return null;
   }
-  const file = await fh.getFile();
-  const key = file.name + ':' + file.lastModified;
+  setRubricLabel(found.label, found.dir ? '' : state.rubricProblem, !found.dir);
+  let file;
+  try {
+    file = await found.handle.getFile();
+  } catch (e) {
+    // The file was renamed/moved since the last scan: rescan once and try again.
+    if (Discover.classifyError(e) === 'gone' && !retried && found.dir) { await rescan(); return loadWorkbook(requestPermission, true); }
+    if (Discover.classifyError(e) === 'gone' && !found.dir) {
+      await FsStore.del('manualRubric');
+      state.manualRubric = null;
+      throw new Error('הקובץ שנבחר ידנית לא נמצא (הועבר או נמחק)');
+    }
+    throw e;
+  }
+  const key = found.label + ':' + file.lastModified;
   if (state.wb && state.wbKey === key) return state.wb;
   state.wb = await Xlsx.readWorkbook(new Uint8Array(await file.arrayBuffer()));
   state.wbKey = key;
   state.lesson = null;
-  $('rubricFileName').textContent = file.name;
-  $('rubricFileName').classList.remove('muted');
   return state.wb;
 }
 
@@ -187,7 +399,7 @@ async function updateLesson(requestPermission) {
   if (!wb) {
     select.textContent = '';
     state.lesson = null;
-    setLessonStatus(state.base ? 'קובץ המחוון לא נמצא / אין הרשאה – ייטען בלחיצה על "שמירת ההגשה"' : 'יש לבחור תיקיית בסיס כדי לטעון את המחוון', true);
+    setLessonStatus(state.rubricProblem || 'קובץ המחוון לא נמצא', true);
     return null;
   }
 
@@ -243,9 +455,11 @@ for (const id of ['studentName', 'assignmentNumber', 'weekFolder', 'onlineText']
   $(id).addEventListener('input', () => {
     state.dirty[id] = true;
     if (id === 'assignmentNumber') {
-      if (!state.dirty.weekFolder) $('weekFolder').value = weekFor($(id).value.trim());
+      state.weekOverride = null; // a typed assignment number wins over an earlier manual week choice
       state.dirty.lessonSheet = false;
+      chooseWeek();
       updateLesson(false);
+      refreshReference(false);
     }
     updateDestPath();
   });
@@ -291,10 +505,11 @@ async function refresh() {
     $('logCard').hidden = true;
   }
   state.ctx = ctx;
+  if (ctx.cmid !== state.cmid) { state.cmid = ctx.cmid; state.weekOverride = null; } // new assignment
 
   if (!state.dirty.studentName) $('studentName').value = ctx.studentName || '';
   if (!state.dirty.assignmentNumber) $('assignmentNumber').value = ctx.assignmentNumber || '';
-  if (!state.dirty.weekFolder) $('weekFolder').value = weekFor($('assignmentNumber').value.trim());
+  chooseWeek();
   if (!state.dirty.onlineText) $('onlineText').value = ctx.onlineText || '';
   $('assignmentTitle').textContent = ctx.assignmentTitle || '—';
   $('userid').textContent = ctx.userid || '—';
@@ -324,18 +539,34 @@ async function refreshReference(requestPermission) {
   if (!state.base || !week) return null;
   const key = state.base.name + '/' + week;
   if (state.referenceKey === key && state.reference) return state.reference;
-  if (!(await FsStore.ensurePermission(state.base, requestPermission))) return null;
-  let weekDir, solDir;
+  let permitted = false;
+  try { permitted = await FsStore.ensurePermission(state.base, requestPermission); } catch (_) { /* root gone */ }
+  if (!permitted) return null;
+  // Prefer the discovered folders (case-insensitive "Solution", fallback to the week folder itself).
+  const entry = Object.values(state.weeks).find((e) => e.weekDirHandle.name.toLowerCase() === week.toLowerCase());
+  let weekDir, files;
   try {
-    weekDir = await state.base.getDirectoryHandle(week);
-    solDir = await weekDir.getDirectoryHandle('Solution');
+    if (entry && !entry.solutionIsFallback) {
+      weekDir = entry.weekDirHandle;
+      files = await FsStore.readAll(entry.solutionDirHandle);
+    } else if (entry && (entry.docxHandle || entry.pyHandles.length)) {
+      // No Solution subfolder: use only the solution files at the top of the week folder,
+      // not the students' ZIPs/summaries saved next to them.
+      weekDir = entry.weekDirHandle;
+      files = [];
+      for (const h of [entry.docxHandle, ...entry.pyHandles].filter(Boolean)) {
+        files.push({ name: h.name, data: new Uint8Array(await (await h.getFile()).arrayBuffer()) });
+      }
+    } else {
+      weekDir = await state.base.getDirectoryHandle(week);
+      files = await FsStore.readAll(await weekDir.getDirectoryHandle('Solution'));
+    }
   } catch (_) {
     state.reference = '';
     state.referenceKey = '';
     $('outReference').value = `(לא נמצאה התיקייה ${week}\\Solution)`;
     return null;
   }
-  const files = await FsStore.readAll(solDir);
   const ref = await Extract.buildReference({
     assignmentTitle: state.ctx ? state.ctx.assignmentTitle : '', weekFolder: week, files,
   });
@@ -506,7 +737,7 @@ $('copyTab').addEventListener('click', () => {
 $('copyPrompt').addEventListener('click', async () => {
   if (!state.summary) return;
   if (!state.reference && state.base) await refreshReference(true);
-  if (!state.lesson && state.base) await updateLesson(true);
+  if (!state.lesson) await updateLesson(true);
   const missing = [!state.reference && 'פתרון', !state.lesson && 'מחוון'].filter(Boolean);
   await copyText(buildPackage(), missing.length
     ? `הועתק ללא ${missing.join(' ו')} ⚠️`
@@ -527,7 +758,8 @@ async function backupRubric(fileName, bytes) {
   const dir = await state.base.getDirectoryHandle('_גיבוי מחוון', { create: true });
   const d = new Date();
   const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const name = fileName.replace(/\.xlsx$/i, '') + ` ${stamp}.xlsx`;
+  const m = /\.xls[xm]$/i.exec(fileName);
+  const name = (m ? fileName.slice(0, m.index) : fileName) + ` ${stamp}${m ? m[0] : '.xlsx'}`;
   try { await dir.getFileHandle(name); return null; } catch (_) { /* no backup yet today */ }
   await FsStore.writeFile(dir, name, bytes);
   return name;
@@ -546,8 +778,9 @@ $('computeGrade').addEventListener('click', async () => {
   btn.disabled = true;
   try {
     // Permission first, while the click still counts as a user gesture.
-    const fh = await findRubricFile(true);
-    if (!fh) throw new Error('קובץ המחוון לא נמצא בתיקיית הבסיס');
+    const found = await findRubricFile(true);
+    if (!found) throw new Error(state.rubricProblem || 'קובץ המחוון לא נמצא');
+    const fh = found.handle;
 
     // Always work on the file as it is on disk right now (it may have been edited since it was loaded).
     const bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer());
@@ -572,12 +805,21 @@ $('computeGrade').addEventListener('click', async () => {
     if (lesson.gradeCol && res.grade !== null) cached[lesson.gradeCol] = res.grade;
     if (lesson.feedbackCol && !res.usedFallback) cached[lesson.feedbackCol] = res.feedback;
 
-    const backup = await backupRubric(fh.name, bytes);
+    // Excel keeps a "~$<name>" lock file next to a workbook it has open; writing now would be lost.
+    const lock = found.dir ? await Discover.isOpenElsewhere(found.dir, fh.name) : null;
+    if (lock) {
+      throw new Error(`קובץ המחוון פתוח ב-Excel – יש לסגור את הקובץ ב-Excel ולנסות שוב. ` +
+        `(אם Excel סגור, יש למחוק את קובץ הנעילה "${lock}" מהתיקייה)`);
+    }
+    const backup = state.base && state.rootStatus === 'ok' ? await backupRubric(fh.name, bytes) : null;
     const out = await XlsxWrite.writeRow(bytes, wb.sheetPath(lesson.sheet), loc.row, values, cached);
     try {
-      await FsStore.writeFile(state.base, fh.name, out);
+      await FsStore.writeHandle(fh, out); // back into the same file that was read
     } catch (e) {
-      throw new Error('לא ניתן לשמור את קובץ המחוון – ייתכן שהוא פתוח ב-Excel. יש לסגור אותו ולנסות שוב. (' + e.name + ')');
+      const kind = Discover.classifyError(e);
+      if (kind === 'gone') throw new Error('קובץ המחוון הועבר או נמחק – יש ללחוץ על "סריקה מחדש".');
+      if (kind === 'permission') throw new Error('אין הרשאת כתיבה לקובץ המחוון – יש ללחוץ על "אישור גישה מחדש".');
+      throw new Error('לא ניתן לשמור את קובץ המחוון – ייתכן שהוא פתוח ב-Excel. יש לסגור את הקובץ ב-Excel ולנסות שוב. (' + e.name + ')');
     }
 
     const where = `גיליון "${lesson.sheet}", שורה ${loc.row}`;

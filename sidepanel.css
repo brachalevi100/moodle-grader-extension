@@ -54,6 +54,12 @@ select {
   color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
 }
 .rubric-row { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.btns { display: flex; gap: 6px; flex-shrink: 0; }
+#reauth { margin-top: 10px; }
+.week-hint { margin: -4px 0 8px; }
+.path-line { text-align: left; font-weight: 600; }
+#rubricMissing { margin-top: 8px; }
+#rubricMissing .warn { margin-bottom: 6px; }
 .lesson-status { margin: -4px 0 8px; }
 .lesson-status.bad { color: var(--err); }
 .grade-line { margin: 10px 0 6px; }
